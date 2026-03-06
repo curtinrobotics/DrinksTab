@@ -129,6 +129,7 @@
               </div>
               <div style="width: 160px;"><button id="addMemberBtn">Add Member</button></div>
             </div>
+            <div id="addMemberDuplicateWarning" class="message error hidden" style="margin-top: 10px;"></div>
           </div>
 
           <div class="card" style="margin-top: 10px;">
@@ -262,6 +263,7 @@
       addName: document.getElementById('addName'),
       addStudentNumber: document.getElementById('addStudentNumber'),
       addBalance: document.getElementById('addBalance'),
+      addMemberDuplicateWarning: document.getElementById('addMemberDuplicateWarning'),
       memberSelect: document.getElementById('memberSelect'),
       removeMemberSelect: document.getElementById('removeMemberSelect'),
       editName: document.getElementById('editName'),
@@ -279,6 +281,16 @@
       importCsvBtn: document.getElementById('importCsvBtn'),
       setDrinkPriceBtn: document.getElementById('setDrinkPriceBtn')
     };
+
+    function hideAddMemberDuplicateWarning() {
+      dom.addMemberDuplicateWarning.textContent = '';
+      dom.addMemberDuplicateWarning.classList.add('hidden');
+    }
+
+    function showAddMemberDuplicateWarning(text) {
+      dom.addMemberDuplicateWarning.textContent = text;
+      dom.addMemberDuplicateWarning.classList.remove('hidden');
+    }
 
     function showMessage(text, type = 'ok') {
       dom.message.innerHTML = `<div class="message ${type}">${text}</div>`;
@@ -540,6 +552,7 @@
       const name = dom.addName.value.trim();
       const studentNumber = dom.addStudentNumber.value.trim();
       const balance = Number(dom.addBalance.value);
+      hideAddMemberDuplicateWarning();
 
       if (!name) {
         showMessage('Name is required.', 'error');
@@ -550,10 +563,21 @@
         return;
       }
 
-      await apiPost(API.add, { name, studentNumber, balance }, { admin: true });
+      try {
+        await apiPost(API.add, { name, studentNumber, balance }, { admin: true });
+      } catch (err) {
+        const message = (err && err.message ? err.message : '').toLowerCase();
+        if (message.includes('already exists')) {
+          showAddMemberDuplicateWarning('Duplicate detected: a member with the same name or student number already exists.');
+          return;
+        }
+        throw err;
+      }
+
       dom.addName.value = '';
       dom.addStudentNumber.value = '';
       dom.addBalance.value = '0.00';
+      hideAddMemberDuplicateWarning();
       showMessage(`Added ${name}.`);
       await refreshMembers();
     }
@@ -709,6 +733,8 @@
           showError(err);
         }
       });
+      dom.addName.addEventListener('input', hideAddMemberDuplicateWarning);
+      dom.addStudentNumber.addEventListener('input', hideAddMemberDuplicateWarning);
 
       dom.saveEditBtn.addEventListener('click', async () => {
         try {
