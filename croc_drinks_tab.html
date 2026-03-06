@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRoC Drinks Tab</title>
+  <style>
+    :root {
+      --bg: #f7f7f8;
+      --card: #fff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #d1d5db;
+      --primary: #0f766e;
+      --primary-dark: #0b5c56;
+      --warn: #b45309;
+      --ok: #166534;
+      --error: #b91c1c;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; background: var(--bg); color: var(--text); font-family: Arial, sans-serif; }
+    .container { max-width: 1050px; margin: 0 auto; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 16px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .field { display: flex; flex-direction: column; gap: 6px; flex: 1 1 220px; }
+    label { font-size: 0.9rem; color: var(--muted); }
+    input, select, button { font-size: 1rem; padding: 10px; border: 1px solid var(--border); border-radius: 8px; width: 100%; }
+    button { cursor: pointer; color: #fff; background: var(--primary); border: none; }
+    button:hover { background: var(--primary-dark); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 10px; }
+    td.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .message { margin-top: 12px; border-radius: 8px; padding: 10px; font-weight: 600; }
+    .message.ok { background: #dcfce7; color: var(--ok); }
+    .message.error { background: #fee2e2; color: var(--error); }
+    .muted { color: var(--muted); }
+    .low { color: var(--warn); font-weight: 700; }
+    .hidden { display: none; }
+    .tabs { display: flex; gap: 8px; margin-top: 12px; }
+    .tab-btn { width: auto; padding: 10px 14px; background: #4b5563; }
+    .tab-btn.active { background: var(--primary); }
+    .section { display: none; }
+    .section.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>CRoC Drinks Tab</h1>
+    <p class="muted">Drink price: <strong id="drinkPriceLabel">$1.00</strong>. Search by name or student number. Admin can edit member details and adjust balance.</p>
+
+    <div class="tabs">
+      <button id="membersTabBtn" class="tab-btn active">Members</button>
+      <button id="adminTabBtn" class="tab-btn">Admin</button>
+    </div>
+
+    <div id="message"></div>
+
+    <section id="membersSection" class="section active">
+      <div class="card">
+        <h2>Members</h2>
+        <div class="row">
+          <div class="field">
+            <label for="searchName">Search (Name or Student Number)</label>
+            <input id="searchName" type="text" placeholder="e.g. Alex or 12345678">
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Balance</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="membersBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="adminSection" class="section">
+      <div class="card">
+        <h2>Admin</h2>
+        <div class="row">
+          <div class="field">
+            <label for="adminPassword">Password</label>
+            <input id="adminPassword" type="password" placeholder="Enter admin password">
+          </div>
+          <div style="width: 180px;"><button id="unlockBtn">Unlock Admin</button></div>
+          <div style="width: 120px;"><button id="lockBtn">Lock</button></div>
+        </div>
+        <p id="adminStatus" class="muted">Admin is locked.</p>
+
+        <div id="adminPanel" class="hidden">
+          <div class="card" style="margin-top: 10px;">
+            <h3>Dashboard</h3>
+            <div class="row">
+              <div class="field">
+                <label>Total Members</label>
+                <input id="dashboardTotalMembers" type="text" value="0" readonly>
+              </div>
+              <div class="field">
+                <label>Total Balance</label>
+                <input id="dashboardTotalBalance" type="text" value="$0.00" readonly>
+              </div>
+              <div class="field">
+                <label id="dashboardLowBalanceLabel">Low Balance (&lt; $1.00)</label>
+                <input id="dashboardLowBalanceCount" type="text" value="0" readonly>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 10px;">
+            <h3>Add Member</h3>
+            <div class="row">
+              <div class="field">
+                <label for="addName">Name</label>
+                <input id="addName" type="text" placeholder="Member name">
+              </div>
+              <div class="field">
+                <label for="addStudentNumber">Student Number</label>
+                <input id="addStudentNumber" type="text" placeholder="Student number (optional)">
+              </div>
+              <div class="field">
+                <label for="addBalance">Starting Balance</label>
+                <input id="addBalance" type="number" min="0" step="0.01" value="0.00">
+              </div>
+              <div style="width: 160px;"><button id="addMemberBtn">Add Member</button></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 10px;">
+            <h3>Edit Member</h3>
+            <div class="row">
+              <div class="field">
+                <label for="editMemberSearch">Find Member</label>
+                <input id="editMemberSearch" type="text" placeholder="Search by name or student number">
+              </div>
+              <div class="field">
+                <label for="memberSelect">Select Member</label>
+                <select id="memberSelect"></select>
+              </div>
+            </div>
+
+            <div class="row" style="margin-top: 10px;">
+              <div class="field">
+                <label for="editName">Name</label>
+                <input id="editName" type="text" placeholder="Member name">
+              </div>
+              <div class="field">
+                <label for="editStudentNumber">Student Number</label>
+                <input id="editStudentNumber" type="text" placeholder="Student number">
+              </div>
+            </div>
+
+            <div class="row" style="margin-top: 10px;">
+              <div class="field">
+                <label for="currentBalance">Current Balance</label>
+                <input id="currentBalance" type="text" value="$0.00" readonly>
+              </div>
+              <div class="field">
+                <label for="balanceDelta">Balance Change (+/-)</label>
+                <input id="balanceDelta" type="number" step="0.01" value="0.00">
+              </div>
+              <div style="width: 180px;"><button id="saveEditBtn">Save Member Changes</button></div>
+            </div>
+
+            <p class="muted">Use positive amount to add credit, negative amount to subtract credit.</p>
+          </div>
+
+          <div class="card" style="margin-top: 10px;">
+            <h3>Remove Member</h3>
+            <div class="row">
+              <div class="field">
+                <label for="removeMemberSearch">Find Member</label>
+                <input id="removeMemberSearch" type="text" placeholder="Search by name or student number">
+              </div>
+              <div class="field">
+                <label for="removeMemberSelect">Select Member</label>
+                <select id="removeMemberSelect"></select>
+              </div>
+              <div style="width: 160px;"><button id="removeMemberBtn">Remove Member</button></div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 10px;">
+            <h3>CSV Tools</h3>
+            <div class="row">
+              <div class="field">
+                <label>Export Current Members</label>
+                <button id="exportCsvBtn">Export Members CSV</button>
+              </div>
+            </div>
+            <div class="row" style="margin-top: 10px;">
+              <div class="field">
+                <label for="importCsvFile">Import CSV (Name,StudentNumber,Balance)</label>
+                <input id="importCsvFile" type="file" accept=".csv,text/csv">
+              </div>
+              <div style="width: 220px;"><button id="importCsvBtn">Initialize from CSV</button></div>
+            </div>
+            <p class="muted">Import replaces all current members with rows from the selected CSV export.</p>
+          </div>
+
+          <div class="card" style="margin-top: 10px;">
+            <h3>Drink Price</h3>
+            <div class="row">
+              <div class="field">
+                <label for="adminDrinkPrice">Current Drink Price</label>
+                <input id="adminDrinkPrice" type="number" min="0.01" step="0.01" value="1.00">
+              </div>
+              <div style="width: 180px;"><button id="setDrinkPriceBtn">Update Price</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const API = {
+      members: '/api/members',
+      purchase: '/api/purchase',
+      login: '/api/admin/login',
+      add: '/api/admin/add',
+      remove: '/api/admin/remove',
+      editMember: '/api/admin/edit-member',
+      exportCsv: '/api/admin/export-csv',
+      importCsv: '/api/admin/import-csv',
+      setDrinkPrice: '/api/admin/set-drink-price'
+    };
+
+    const state = {
+      adminPassword: '',
+      adminUnlocked: false,
+      members: [],
+      drinkPrice: 1.0,
+      publicSearch: '',
+      editMemberSearch: '',
+      removeMemberSearch: ''
+    };
+
+    const dom = {
+      message: document.getElementById('message'),
+      drinkPriceLabel: document.getElementById('drinkPriceLabel'),
+      membersTabBtn: document.getElementById('membersTabBtn'),
+      adminTabBtn: document.getElementById('adminTabBtn'),
+      membersSection: document.getElementById('membersSection'),
+      adminSection: document.getElementById('adminSection'),
+      membersBody: document.getElementById('membersBody'),
+      searchName: document.getElementById('searchName'),
+      editMemberSearch: document.getElementById('editMemberSearch'),
+      removeMemberSearch: document.getElementById('removeMemberSearch'),
+      adminPassword: document.getElementById('adminPassword'),
+      adminPanel: document.getElementById('adminPanel'),
+      adminStatus: document.getElementById('adminStatus'),
+      dashboardTotalMembers: document.getElementById('dashboardTotalMembers'),
+      dashboardTotalBalance: document.getElementById('dashboardTotalBalance'),
+      dashboardLowBalanceLabel: document.getElementById('dashboardLowBalanceLabel'),
+      dashboardLowBalanceCount: document.getElementById('dashboardLowBalanceCount'),
+      addName: document.getElementById('addName'),
+      addStudentNumber: document.getElementById('addStudentNumber'),
+      addBalance: document.getElementById('addBalance'),
+      memberSelect: document.getElementById('memberSelect'),
+      removeMemberSelect: document.getElementById('removeMemberSelect'),
+      editName: document.getElementById('editName'),
+      editStudentNumber: document.getElementById('editStudentNumber'),
+      currentBalance: document.getElementById('currentBalance'),
+      balanceDelta: document.getElementById('balanceDelta'),
+      importCsvFile: document.getElementById('importCsvFile'),
+      adminDrinkPrice: document.getElementById('adminDrinkPrice'),
+      unlockBtn: document.getElementById('unlockBtn'),
+      lockBtn: document.getElementById('lockBtn'),
+      addMemberBtn: document.getElementById('addMemberBtn'),
+      saveEditBtn: document.getElementById('saveEditBtn'),
+      removeMemberBtn: document.getElementById('removeMemberBtn'),
+      exportCsvBtn: document.getElementById('exportCsvBtn'),
+      importCsvBtn: document.getElementById('importCsvBtn'),
+      setDrinkPriceBtn: document.getElementById('setDrinkPriceBtn')
+    };
+
+    function showMessage(text, type = 'ok') {
+      dom.message.innerHTML = `<div class="message ${type}">${text}</div>`;
+      setTimeout(() => {
+        dom.message.innerHTML = '';
+      }, 4000);
+    }
+
+    function showError(err) {
+      showMessage(err.message || String(err), 'error');
+    }
+
+    function normalizedTerm(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function switchSection(target) {
+      if (target === 'members') {
+        if (state.adminUnlocked) {
+          lockAdmin();
+          showMessage('Admin auto-locked when returning to Members view.');
+        }
+        dom.membersTabBtn.classList.add('active');
+        dom.adminTabBtn.classList.remove('active');
+        dom.membersSection.classList.add('active');
+        dom.adminSection.classList.remove('active');
+        return;
+      }
+
+      dom.adminTabBtn.classList.add('active');
+      dom.membersTabBtn.classList.remove('active');
+      dom.adminSection.classList.add('active');
+      dom.membersSection.classList.remove('active');
+    }
+
+    async function apiGet(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+
+    async function apiPost(url, body, { admin = false } = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (admin && state.adminPassword) {
+        headers['X-Admin-Password'] = state.adminPassword;
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body || {})
+      });
+
+      let payload = {};
+      try {
+        payload = await res.json();
+      } catch (_) {
+        payload = {};
+      }
+
+      if (!res.ok) {
+        if (admin && res.status === 401) {
+          lockAdmin();
+        }
+        throw new Error(payload.error || `HTTP ${res.status}`);
+      }
+
+      return payload;
+    }
+
+    function ensureAdminUnlocked() {
+      if (state.adminUnlocked && state.adminPassword) {
+        return true;
+      }
+      showMessage('Admin is locked.', 'error');
+      return false;
+    }
+
+    function memberMatchesTerm(member, term) {
+      if (!term) return true;
+      const name = normalizedTerm(member.name);
+      const student = normalizedTerm(member.studentNumber);
+      return name.startsWith(term) || student.startsWith(term);
+    }
+
+    function getMemberById(id) {
+      const numericId = Number(id);
+      return state.members.find((member) => Number(member.id) === numericId);
+    }
+
+    function getPublicFilteredMembers() {
+      const term = normalizedTerm(state.publicSearch);
+      return state.members.filter((member) => memberMatchesTerm(member, term));
+    }
+
+    function getAdminFilteredMembers(termValue) {
+      const term = normalizedTerm(termValue);
+      const filtered = term
+        ? state.members.filter((member) => memberMatchesTerm(member, term))
+        : [...state.members];
+      return filtered.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    }
+
+    function updateDashboard() {
+      const totalMembers = state.members.length;
+      const totalBalance = state.members.reduce((sum, member) => sum + Number(member.balance || 0), 0);
+      const lowBalanceCount = state.members.filter((member) => Number(member.balance || 0) < state.drinkPrice).length;
+
+      dom.dashboardTotalMembers.value = String(totalMembers);
+      dom.dashboardTotalBalance.value = `$${totalBalance.toFixed(2)}`;
+      dom.dashboardLowBalanceCount.value = String(lowBalanceCount);
+      dom.dashboardLowBalanceLabel.textContent = `Low Balance (< $${state.drinkPrice.toFixed(2)})`;
+    }
+
+    function renderPublicMembers() {
+      const members = getPublicFilteredMembers();
+      dom.membersBody.innerHTML = '';
+
+      if (!normalizedTerm(state.publicSearch)) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 3;
+        cell.className = 'muted';
+        cell.textContent = 'Start typing your name or student number to view your record.';
+        row.appendChild(cell);
+        dom.membersBody.appendChild(row);
+        return;
+      }
+
+      for (const member of members) {
+        const row = document.createElement('tr');
+        const nameCell = document.createElement('td');
+        const balanceCell = document.createElement('td');
+        const actionsCell = document.createElement('td');
+        actionsCell.className = 'actions';
+
+        nameCell.textContent = member.name;
+        balanceCell.textContent = `$${Number(member.balance).toFixed(2)}`;
+        if (Number(member.balance) < state.drinkPrice) {
+          balanceCell.className = 'low';
+        }
+
+        const buyButton = document.createElement('button');
+        buyButton.textContent = `Buy Drink (-$${state.drinkPrice.toFixed(2)})`;
+        buyButton.disabled = Number(member.balance) < state.drinkPrice;
+        buyButton.addEventListener('click', async () => {
+          try {
+            const result = await apiPost(API.purchase, { id: member.id });
+            const remaining = result.member ? Number(result.member.balance).toFixed(2) : '?';
+            showMessage(`${member.name} bought a drink. Remaining: $${remaining}.`);
+            await refreshMembers();
+          } catch (err) {
+            showError(err);
+          }
+        });
+
+        actionsCell.appendChild(buyButton);
+        row.appendChild(nameCell);
+        row.appendChild(balanceCell);
+        row.appendChild(actionsCell);
+        dom.membersBody.appendChild(row);
+      }
+    }
+
+    function renderAdminSelectors() {
+      renderEditMemberSelector();
+      renderRemoveMemberSelector();
+    }
+
+    function clearEditFields() {
+      dom.editName.value = '';
+      dom.editStudentNumber.value = '';
+      dom.currentBalance.value = '$0.00';
+      dom.balanceDelta.value = '0.00';
+    }
+
+    function toMemberOptions(members) {
+      return members
+        .map((member) => `<option value="${member.id}">${member.name} (${member.studentNumber || 'no student number'})</option>`)
+        .join('');
+    }
+
+    function renderEditMemberSelector() {
+      const members = getAdminFilteredMembers(state.editMemberSearch);
+      if (members.length === 0) {
+        dom.memberSelect.innerHTML = '<option value="">No matching members</option>';
+        clearEditFields();
+        return;
+      }
+      dom.memberSelect.innerHTML = toMemberOptions(members);
+      populateEditFieldsFromSelectedMember();
+    }
+
+    function renderRemoveMemberSelector() {
+      const members = getAdminFilteredMembers(state.removeMemberSearch);
+      if (members.length === 0) {
+        dom.removeMemberSelect.innerHTML = '<option value="">No matching members</option>';
+        return;
+      }
+      dom.removeMemberSelect.innerHTML = toMemberOptions(members);
+    }
+
+    function populateEditFieldsFromSelectedMember() {
+      const member = getMemberById(dom.memberSelect.value);
+      if (!member) return;
+
+      dom.editName.value = member.name;
+      dom.editStudentNumber.value = member.studentNumber || '';
+      dom.currentBalance.value = `$${Number(member.balance).toFixed(2)}`;
+      dom.balanceDelta.value = '0.00';
+    }
+
+    async function refreshMembers() {
+      const data = await apiGet(API.members);
+      state.members = Array.isArray(data.members) ? data.members : [];
+      const parsedPrice = Number(data.drinkPrice);
+      if (Number.isFinite(parsedPrice) && parsedPrice > 0) {
+        state.drinkPrice = parsedPrice;
+      }
+      dom.drinkPriceLabel.textContent = `$${state.drinkPrice.toFixed(2)}`;
+      dom.adminDrinkPrice.value = state.drinkPrice.toFixed(2);
+      renderPublicMembers();
+      updateDashboard();
+      renderAdminSelectors();
+    }
+
+    function lockAdmin() {
+      state.adminUnlocked = false;
+      state.adminPassword = '';
+      dom.adminPassword.value = '';
+      dom.adminPanel.classList.add('hidden');
+      dom.adminStatus.textContent = 'Admin is locked.';
+    }
+
+    async function unlockAdmin() {
+      const password = dom.adminPassword.value;
+      if (!password) {
+        showMessage('Enter admin password.', 'error');
+        return;
+      }
+
+      try {
+        state.adminPassword = password;
+        await apiPost(API.login, {}, { admin: true });
+        state.adminUnlocked = true;
+        dom.adminPanel.classList.remove('hidden');
+        dom.adminStatus.textContent = 'Admin is unlocked.';
+        renderAdminSelectors();
+        showMessage('Admin unlocked.');
+      } catch (_) {
+        lockAdmin();
+        showMessage('Invalid admin password.', 'error');
+      }
+    }
+
+    async function addMemberFromAdmin() {
+      if (!ensureAdminUnlocked()) return;
+
+      const name = dom.addName.value.trim();
+      const studentNumber = dom.addStudentNumber.value.trim();
+      const balance = Number(dom.addBalance.value);
+
+      if (!name) {
+        showMessage('Name is required.', 'error');
+        return;
+      }
+      if (!Number.isFinite(balance) || balance < 0) {
+        showMessage('Starting balance must be a non-negative number.', 'error');
+        return;
+      }
+
+      await apiPost(API.add, { name, studentNumber, balance }, { admin: true });
+      dom.addName.value = '';
+      dom.addStudentNumber.value = '';
+      dom.addBalance.value = '0.00';
+      showMessage(`Added ${name}.`);
+      await refreshMembers();
+    }
+
+    async function saveMemberEdits() {
+      if (!ensureAdminUnlocked()) return;
+
+      const memberId = Number(dom.memberSelect.value);
+      const name = dom.editName.value.trim();
+      const studentNumber = dom.editStudentNumber.value.trim();
+      const balanceDelta = Number(dom.balanceDelta.value);
+
+      if (!memberId) {
+        showMessage('Select a member.', 'error');
+        return;
+      }
+      if (!name) {
+        showMessage('Name is required.', 'error');
+        return;
+      }
+      if (!Number.isFinite(balanceDelta)) {
+        showMessage('Balance change must be a number.', 'error');
+        return;
+      }
+
+      await apiPost(
+        API.editMember,
+        { id: memberId, name, studentNumber, balanceDelta },
+        { admin: true }
+      );
+
+      showMessage(`Updated ${name}.`);
+      await refreshMembers();
+    }
+
+    async function removeMemberFromAdmin() {
+      if (!ensureAdminUnlocked()) return;
+
+      const member = getMemberById(dom.removeMemberSelect.value);
+      if (!member) {
+        showMessage('Select a member to remove.', 'error');
+        return;
+      }
+      if (!confirm(`Remove ${member.name}?`)) {
+        return;
+      }
+
+      await apiPost(API.remove, { name: member.name }, { admin: true });
+      showMessage(`Removed ${member.name}.`);
+      await refreshMembers();
+    }
+
+    async function exportMembersCsv() {
+      if (!ensureAdminUnlocked()) return;
+
+      const res = await fetch(API.exportCsv, {
+        method: 'GET',
+        headers: { 'X-Admin-Password': state.adminPassword }
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          lockAdmin();
+        }
+        let message = `Export failed: HTTP ${res.status}`;
+        try {
+          const payload = await res.json();
+          if (payload && payload.error) {
+            message = payload.error;
+          }
+        } catch (_) {}
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'drinks_members_export.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showMessage('CSV export downloaded.');
+    }
+
+    async function importMembersCsv() {
+      if (!ensureAdminUnlocked()) return;
+
+      const file = dom.importCsvFile.files && dom.importCsvFile.files[0];
+      if (!file) {
+        showMessage('Select a CSV file first.', 'error');
+        return;
+      }
+      if (!confirm('Initialize database from CSV? This will replace all current members.')) {
+        return;
+      }
+
+      const csvText = await file.text();
+      await apiPost(API.importCsv, { csv: csvText }, { admin: true });
+      dom.importCsvFile.value = '';
+      showMessage('Database initialized from CSV.');
+      await refreshMembers();
+    }
+
+    async function updateDrinkPriceFromAdmin() {
+      if (!ensureAdminUnlocked()) return;
+
+      const newPrice = Number(dom.adminDrinkPrice.value);
+      if (!Number.isFinite(newPrice) || newPrice <= 0) {
+        showMessage('Drink price must be a number greater than 0.', 'error');
+        return;
+      }
+
+      await apiPost(API.setDrinkPrice, { drinkPrice: newPrice }, { admin: true });
+      showMessage(`Drink price updated to $${newPrice.toFixed(2)}.`);
+      await refreshMembers();
+    }
+
+    function bindEvents() {
+      dom.membersTabBtn.addEventListener('click', () => switchSection('members'));
+      dom.adminTabBtn.addEventListener('click', () => switchSection('admin'));
+
+      dom.searchName.addEventListener('input', (event) => {
+        state.publicSearch = event.target.value || '';
+        renderPublicMembers();
+      });
+
+      dom.editMemberSearch.addEventListener('input', (event) => {
+        state.editMemberSearch = event.target.value || '';
+        renderEditMemberSelector();
+      });
+
+      dom.removeMemberSearch.addEventListener('input', (event) => {
+        state.removeMemberSearch = event.target.value || '';
+        renderRemoveMemberSelector();
+      });
+
+      dom.memberSelect.addEventListener('change', populateEditFieldsFromSelectedMember);
+
+      dom.unlockBtn.addEventListener('click', async () => {
+        await unlockAdmin();
+      });
+      dom.lockBtn.addEventListener('click', () => {
+        lockAdmin();
+        showMessage('Admin locked.');
+      });
+
+      dom.addMemberBtn.addEventListener('click', async () => {
+        try {
+          await addMemberFromAdmin();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      dom.saveEditBtn.addEventListener('click', async () => {
+        try {
+          await saveMemberEdits();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      dom.removeMemberBtn.addEventListener('click', async () => {
+        try {
+          await removeMemberFromAdmin();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      dom.exportCsvBtn.addEventListener('click', async () => {
+        try {
+          await exportMembersCsv();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      dom.importCsvBtn.addEventListener('click', async () => {
+        try {
+          await importMembersCsv();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      dom.setDrinkPriceBtn.addEventListener('click', async () => {
+        try {
+          await updateDrinkPriceFromAdmin();
+        } catch (err) {
+          showError(err);
+        }
+      });
+    }
+
+    async function init() {
+      lockAdmin();
+      switchSection('members');
+      bindEvents();
+
+      try {
+        await refreshMembers();
+      } catch (err) {
+        showMessage(`Could not load data: ${err.message}.`, 'error');
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

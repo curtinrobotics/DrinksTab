@@ -1,0 +1,22 @@
+[Unit]
+Description=CRoC Drinks Tab Local Server
+After=local-fs.target
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Replace these values with your Ubuntu laptop settings.
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/ABSOLUTE/PATH/TO/drinks_tab
+ExecStart=/usr/bin/python3 /ABSOLUTE/PATH/TO/drinks_tab/server.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/YOUR_USERNAME
+
+[Install]
+WantedBy=multi-user.target
