@@ -43,6 +43,19 @@
     .tab-btn.active { background: var(--primary); }
     .section { display: none; }
     .section.active { display: block; }
+    .members-toolbar { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
+    .members-toolbar .field { flex: 1 1 420px; min-width: 280px; }
+    .search-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+    .camera-panel { flex: 0 0 260px; width: 260px; margin-top: 0; margin-left: auto; }
+    .camera-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+    .camera-controls button { width: auto; }
+    .camera-status { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.35; }
+    .camera-preview { display: block; width: 100%; height: 146px; object-fit: cover; border: 1px solid var(--border); border-radius: 10px; background: #111827; }
+    @media (max-width: 780px) {
+      .search-meta { align-items: flex-start; }
+      .camera-panel { flex: 1 1 100%; width: 100%; margin-left: 0; }
+      .camera-preview { max-width: 320px; height: 180px; }
+    }
   </style>
 </head>
 <body>
@@ -60,10 +73,21 @@
     <section id="membersSection" class="section active">
       <div class="card">
         <h2>Members</h2>
-        <div class="row">
+        <div class="members-toolbar">
           <div class="field">
             <label for="searchName">Search (Name or Student Number)</label>
             <input id="searchName" type="text" placeholder="e.g. Alex or 12345678">
+            <div class="search-meta">
+              <div class="camera-controls">
+                <button id="clearSearchBtn" type="button">Clear Search</button>
+                <button id="stopScanBtn" type="button">Pause Scanner</button>
+                <button id="startScanBtn" type="button" class="hidden">Resume Scanner</button>
+              </div>
+              <p id="scanStatus" class="camera-status">Starting scanner...</p>
+            </div>
+          </div>
+          <div class="camera-panel">
+            <video id="scanVideo" class="camera-preview" autoplay muted playsinline></video>
           </div>
         </div>
 
@@ -239,7 +263,18 @@
       drinkPrice: 1.0,
       publicSearch: '',
       editMemberSearch: '',
-      removeMemberSearch: ''
+      removeMemberSearch: '',
+      scanner: {
+        supported: typeof window !== 'undefined' && 'BarcodeDetector' in window,
+        detector: null,
+        stream: null,
+        active: false,
+        scanTimer: null,
+        lastScannedValue: '',
+        lastScannedAt: 0,
+        scanIntervalMs: 350,
+        rescanCooldownMs: 1500
+      }
     };
 
     const dom = {
@@ -251,6 +286,11 @@
       adminSection: document.getElementById('adminSection'),
       membersBody: document.getElementById('membersBody'),
       searchName: document.getElementById('searchName'),
+      clearSearchBtn: document.getElementById('clearSearchBtn'),
+      startScanBtn: document.getElementById('startScanBtn'),
+      stopScanBtn: document.getElementById('stopScanBtn'),
+      scanStatus: document.getElementById('scanStatus'),
+      scanVideo: document.getElementById('scanVideo'),
       editMemberSearch: document.getElementById('editMemberSearch'),
       removeMemberSearch: document.getElementById('removeMemberSearch'),
       adminPassword: document.getElementById('adminPassword'),
@@ -307,6 +347,174 @@
       return String(value || '').trim().toLowerCase();
     }
 
+    function extractStudentNumber(rawValue) {
+      const value = String(rawValue || '').trim();
+      if (!value) return '';
+
+      const compact = value.replace(/\s+/g, '');
+      if (/^[A-Za-z0-9]{7,8}$/.test(compact)) {
+        return compact.toUpperCase();
+      }
+
+      const barcodeMatch = compact.match(/^[A-Za-z0-9]{3}([A-Za-z0-9]{7,8})$/);
+      if (barcodeMatch) {
+        return barcodeMatch[1].toUpperCase();
+      }
+
+      return '';
+    }
+
+    function setPublicSearch(value) {
+      state.publicSearch = value || '';
+      dom.searchName.value = state.publicSearch;
+      renderPublicMembers();
+    }
+
+    function updateScanStatus(text, isError = false) {
+      dom.scanStatus.textContent = text;
+      dom.scanStatus.style.color = isError ? 'var(--error)' : 'var(--muted)';
+    }
+
+    function scheduleNextScan(delayMs = state.scanner.scanIntervalMs) {
+      if (state.scanner.scanTimer) {
+        clearTimeout(state.scanner.scanTimer);
+      }
+
+      if (!state.scanner.active) {
+        state.scanner.scanTimer = null;
+        return;
+      }
+
+      state.scanner.scanTimer = window.setTimeout(() => {
+        state.scanner.scanTimer = null;
+        void scanVideoFrame();
+      }, delayMs);
+    }
+
+    function ensureBarcodeDetector() {
+      if (!state.scanner.supported) {
+        throw new Error('This browser does not support barcode scanning. Try Chrome on Ubuntu.');
+      }
+
+      if (!state.scanner.detector) {
+        state.scanner.detector = new BarcodeDetector({
+          formats: ['code_128', 'code_39', 'codabar', 'ean_13', 'ean_8', 'upc_a', 'upc_e']
+        });
+      }
+
+      return state.scanner.detector;
+    }
+
+    function stopBarcodeScan({ keepStatus = false } = {}) {
+      if (state.scanner.scanTimer) {
+        clearTimeout(state.scanner.scanTimer);
+        state.scanner.scanTimer = null;
+      }
+
+      if (state.scanner.stream) {
+        for (const track of state.scanner.stream.getTracks()) {
+          track.stop();
+        }
+        state.scanner.stream = null;
+      }
+
+      state.scanner.active = false;
+      dom.scanVideo.pause();
+      dom.scanVideo.srcObject = null;
+      dom.scanVideo.classList.add('hidden');
+      dom.startScanBtn.classList.remove('hidden');
+      dom.stopScanBtn.classList.add('hidden');
+
+      if (!keepStatus) {
+        updateScanStatus('Scanner paused.');
+      }
+    }
+
+    async function scanVideoFrame() {
+      if (!state.scanner.active || !dom.scanVideo.srcObject) {
+        return;
+      }
+
+      try {
+        const detector = ensureBarcodeDetector();
+        const barcodes = await detector.detect(dom.scanVideo);
+        const now = Date.now();
+        for (const barcode of barcodes) {
+          const studentNumber = extractStudentNumber(barcode.rawValue);
+          if (!studentNumber) {
+            continue;
+          }
+
+          if (
+            studentNumber === state.scanner.lastScannedValue &&
+            now - state.scanner.lastScannedAt < state.scanner.rescanCooldownMs
+          ) {
+            continue;
+          }
+
+          state.scanner.lastScannedValue = studentNumber;
+          state.scanner.lastScannedAt = now;
+          setPublicSearch(studentNumber);
+          updateScanStatus(`Scanned ${studentNumber}. Waiting for next card...`);
+          scheduleNextScan(state.scanner.rescanCooldownMs);
+          return;
+        }
+      } catch (err) {
+        updateScanStatus(err.message || 'Barcode scan failed.', true);
+        scheduleNextScan(1500);
+        return;
+      }
+
+      scheduleNextScan();
+    }
+
+    async function startBarcodeScan() {
+      try {
+        ensureBarcodeDetector();
+        if (state.scanner.stream) {
+          state.scanner.active = true;
+          dom.scanVideo.classList.remove('hidden');
+          dom.startScanBtn.classList.add('hidden');
+          dom.stopScanBtn.classList.remove('hidden');
+          updateScanStatus('Scanner active. Present a student ID to the camera.');
+          scheduleNextScan(0);
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment'
+          },
+          audio: false
+        });
+
+        state.scanner.stream = stream;
+        state.scanner.active = true;
+        dom.scanVideo.srcObject = stream;
+        dom.scanVideo.classList.remove('hidden');
+        dom.startScanBtn.classList.add('hidden');
+        dom.stopScanBtn.classList.remove('hidden');
+        updateScanStatus('Scanner active. Present a student ID to the camera.');
+        for (const track of stream.getVideoTracks()) {
+          track.addEventListener('ended', () => {
+            if (!state.scanner.active) {
+              return;
+            }
+            updateScanStatus('Camera disconnected. Retrying...', true);
+            stopBarcodeScan({ keepStatus: true });
+            window.setTimeout(() => {
+              void startBarcodeScan();
+            }, 1500);
+          });
+        }
+        await dom.scanVideo.play();
+        scheduleNextScan(0);
+      } catch (err) {
+        stopBarcodeScan({ keepStatus: true });
+        updateScanStatus(err.message || 'Could not access the webcam.', true);
+      }
+    }
+
     function switchSection(target) {
       if (target === 'members') {
         if (state.adminUnlocked) {
@@ -317,9 +525,13 @@
         dom.adminTabBtn.classList.remove('active');
         dom.membersSection.classList.add('active');
         dom.adminSection.classList.remove('active');
+        if (state.scanner.supported) {
+          void startBarcodeScan();
+        }
         return;
       }
 
+      stopBarcodeScan({ keepStatus: true });
       dom.adminTabBtn.classList.add('active');
       dom.membersTabBtn.classList.remove('active');
       dom.adminSection.classList.add('active');
@@ -702,8 +914,19 @@
       dom.adminTabBtn.addEventListener('click', () => switchSection('admin'));
 
       dom.searchName.addEventListener('input', (event) => {
-        state.publicSearch = event.target.value || '';
-        renderPublicMembers();
+        setPublicSearch(event.target.value || '');
+      });
+
+      dom.clearSearchBtn.addEventListener('click', () => {
+        setPublicSearch('');
+      });
+
+      dom.startScanBtn.addEventListener('click', async () => {
+        await startBarcodeScan();
+      });
+
+      dom.stopScanBtn.addEventListener('click', () => {
+        stopBarcodeScan();
       });
 
       dom.editMemberSearch.addEventListener('input', (event) => {
@@ -775,12 +998,21 @@
           showError(err);
         }
       });
+
+      window.addEventListener('beforeunload', () => {
+        stopBarcodeScan({ keepStatus: true });
+      });
     }
 
     async function init() {
       lockAdmin();
       switchSection('members');
       bindEvents();
+      if (!state.scanner.supported) {
+        dom.startScanBtn.disabled = true;
+        dom.stopScanBtn.disabled = true;
+        updateScanStatus('Barcode scanning is not supported in this browser.');
+      }
 
       try {
         await refreshMembers();

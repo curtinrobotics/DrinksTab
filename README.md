@@ -1,106 +1,112 @@
 # CRoC Drinks Tab
 
-Simple localhost web app for drinks balances.
+Simple localhost web app for tracking student drinks balances.
 
-## What members can do
+## What It Does
+
+Members can:
 - Search by name or student number.
-- Buy one drink (`-$1.00`) from their balance.
-- Student numbers are searchable but hidden in the public members table.
+- Use the always-on webcam barcode scanner to populate or replace the search from student or staff IDs.
+- Clear the search with one button.
+- Buy one drink from their balance.
 
-## What admin can do
-- Add members.
-- Remove members.
-- Search and select a member to edit.
-- Update name and student number.
-- Add/subtract from existing balance.
+Admins can:
+- Unlock the admin panel with the password.
+- Add, edit, and remove members.
+- Adjust balances.
 - Update the drink price.
-- Admin auto-locks when switching back to the Members tab.
-- Export current members database to CSV.
-- Initialize/replace database from exported CSV.
+- Export and import the member list as CSV.
 
-## Local run (manual)
+## Files
+
+- `server.py` - local Python server and SQLite API
+- `croc_drinks_tab.html` - single-page frontend
+- `drinks_tab.db` - local SQLite database, created automatically
+- `deploy/croc-drinks-tab.service` - systemd service file
+- `deploy/install_system_service.sh` - helper to install the service
+
+## Requirements
+
+- Ubuntu laptop or desktop
+- `python3`
+- A Chromium-based browser on Ubuntu
+- Webcam access enabled in the browser
+
+The barcode scanner uses the browser's built-in `BarcodeDetector` API. Chrome or Chromium on Ubuntu is recommended. It accepts IDs with 3 leading unused characters followed by either a 7-character or 8-character member ID.
+
+## Quick Start
+
 From this folder:
 
 ```bash
 python3 server.py
 ```
 
-Open:
+Then open:
+
 - <http://127.0.0.1:8000>
 
-Database file is local SQLite at:
-- `./drinks_tab.db`
+On first use, allow webcam access in the browser so the always-on scanner can start.
 
-All member changes are logged in:
-- `member_audit_log` table (add/edit/purchase/remove/balance changes)
+## Recommended Deployment
 
-## Ubuntu auto-start on boot (recommended)
-Install as a system service:
+Install the app as a systemd service so it starts on boot:
 
 ```bash
 cd /absolute/path/to/drinks_tab
 sudo bash deploy/install_system_service.sh
 ```
 
-If you previously installed an older unit file, reinstall to overwrite it:
-
-```bash
-sudo systemctl disable --now croc-drinks-tab.service
-cd /absolute/path/to/drinks_tab
-sudo bash deploy/install_system_service.sh
-```
-
-Service commands:
+Useful service commands:
 
 ```bash
 sudo systemctl start croc-drinks-tab.service
 sudo systemctl stop croc-drinks-tab.service
 sudo systemctl restart croc-drinks-tab.service
 sudo systemctl status croc-drinks-tab.service
+```
+
+To follow logs:
+
+```bash
 sudo journalctl -u croc-drinks-tab.service -f
 ```
 
-Disable auto-start:
+## First-Time Setup Checklist
 
-```bash
-sudo systemctl disable croc-drinks-tab.service
-```
+1. Copy this folder onto the Ubuntu machine.
+2. Run the systemd install script.
+3. Start the service.
+4. Open the app in Chrome or Chromium.
+5. Allow webcam access.
+6. Unlock the admin panel.
+7. Import the member CSV or add members manually.
+8. Confirm the scanner reads a student card and fills the search.
 
-If the service shows running but frontend cannot connect, verify on the laptop:
+## Data
 
-```bash
-curl -v http://127.0.0.1:8000/api/members
-sudo systemctl status croc-drinks-tab.service --no-pager -l
-sudo journalctl -u croc-drinks-tab.service -n 120 --no-pager
-```
+- Member data is stored in `./drinks_tab.db`
+- Member activity is logged in the SQLite table `member_audit_log`
 
-## Logs
-Runtime/service logs (server stdout/stderr) are in systemd journal:
-
-```bash
-sudo journalctl -u croc-drinks-tab.service
-sudo journalctl -u croc-drinks-tab.service -f
-```
-
-Member activity logs (add/edit/purchase/remove/balance changes) are stored in SQLite table `member_audit_log` inside `./drinks_tab.db`.
-
-Example query:
+To inspect the latest activity:
 
 ```bash
 sqlite3 ./drinks_tab.db \
 "SELECT datetime(event_time_ms/1000,'unixepoch','localtime'), action, actor, member_name, balance_before, balance_after, balance_delta FROM member_audit_log ORDER BY id DESC LIMIT 20;"
 ```
 
-## API used by the webpage
-- `GET /api/members?search=<name_or_student_number>`
-- `POST /api/purchase` body: `{ "id": 1 }`
-- `POST /api/admin/login` header: `X-Admin-Password: ****`
-- `POST /api/admin/add` header: `X-Admin-Password: ****`
-- `POST /api/admin/remove` header: `X-Admin-Password: ****`
-- `POST /api/admin/edit-member` header: `X-Admin-Password: ****`
-  - body: `{ "id": 1, "name": "Alice", "studentNumber": "12345678", "balanceDelta": 2.0 }`
-- `GET /api/admin/export-csv` header: `X-Admin-Password: ****`
-- `POST /api/admin/import-csv` header: `X-Admin-Password: ****`
-  - body: `{ "csv": "Name,StudentNumber,Balance\\nAlice,12345678,5.00\\n" }`
-- `POST /api/admin/set-drink-price` header: `X-Admin-Password: ****`
-  - body: `{ "drinkPrice": 1.50 }`
+## Troubleshooting
+
+If the page loads but scanning does not work:
+- Use Chrome or Chromium on Ubuntu.
+- Check that webcam permission is allowed.
+- Confirm no other app is using the webcam.
+- Reload the page.
+
+If the frontend cannot connect:
+
+```bash
+curl http://127.0.0.1:8000/api/members
+sudo systemctl status croc-drinks-tab.service --no-pager -l
+sudo journalctl -u croc-drinks-tab.service -n 120 --no-pager
+```
