@@ -229,6 +229,15 @@
   </div>
 
   <script>
+    const DEFAULT_DRINK_PRICE = 1.0;
+    const MESSAGE_TIMEOUT_MS = 4000;
+    const SEARCH_CLEAR_TIMEOUT_MS = 60000;
+    const SCANNER_KEY_GAP_MS = 80;
+    const SCANNER_COMMIT_DELAY_MS = 120;
+    const SCANNER_MIN_LENGTH = 6;
+    const ZERO_MONEY_TEXT = '0.00';
+    const ZERO_CURRENCY_TEXT = '$0.00';
+
     const API = {
       members: '/api/members',
       purchase: '/api/purchase',
@@ -245,13 +254,14 @@
       adminPassword: '',
       adminUnlocked: false,
       members: [],
-      drinkPrice: 1.0,
+      drinkPrice: DEFAULT_DRINK_PRICE,
       publicSearch: '',
       editMemberSearch: '',
       removeMemberSearch: '',
       searchClearTimer: null,
       scannerInputBuffer: '',
-      scannerLastKeyAt: 0
+      scannerLastKeyAt: 0,
+      scannerCommitTimer: null
     };
 
     const dom = {
@@ -309,7 +319,7 @@
       dom.message.innerHTML = `<div class="message ${type}">${text}</div>`;
       setTimeout(() => {
         dom.message.innerHTML = '';
-      }, 4000);
+      }, MESSAGE_TIMEOUT_MS);
     }
 
     function showError(err) {
@@ -340,6 +350,22 @@
       return extractSearchableStudentNumber(term) || term;
     }
 
+    function focusInputWhenVisible(input, section, { select = false } = {}) {
+      if (!section.classList.contains('active')) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        if (!section.classList.contains('active')) {
+          return;
+        }
+        input.focus();
+        if (select) {
+          input.select();
+        }
+      }, 0);
+    }
+
     function clearSearchClearTimer() {
       if (state.searchClearTimer) {
         clearTimeout(state.searchClearTimer);
@@ -355,39 +381,22 @@
 
       state.searchClearTimer = window.setTimeout(() => {
         setPublicSearch('', { preserveFocus: true });
-      }, 60000);
+      }, SEARCH_CLEAR_TIMEOUT_MS);
     }
 
     function focusSearchInput({ select = false } = {}) {
-      if (!dom.membersSection.classList.contains('active')) {
-        return;
-      }
-
-      window.setTimeout(() => {
-        if (!dom.membersSection.classList.contains('active')) {
-          return;
-        }
-        dom.searchName.focus();
-        if (select) {
-          dom.searchName.select();
-        }
-      }, 0);
+      focusInputWhenVisible(dom.searchName, dom.membersSection, { select });
     }
 
     function focusAdminPasswordInput({ select = false } = {}) {
-      if (!dom.adminSection.classList.contains('active')) {
-        return;
-      }
+      focusInputWhenVisible(dom.adminPassword, dom.adminSection, { select });
+    }
 
-      window.setTimeout(() => {
-        if (!dom.adminSection.classList.contains('active')) {
-          return;
-        }
-        dom.adminPassword.focus();
-        if (select) {
-          dom.adminPassword.select();
-        }
-      }, 0);
+    function clearScannerCommitTimer() {
+      if (state.scannerCommitTimer) {
+        clearTimeout(state.scannerCommitTimer);
+        state.scannerCommitTimer = null;
+      }
     }
 
     function setPublicSearch(value, { preserveFocus = false } = {}) {
@@ -412,6 +421,24 @@
       dom.searchName.select();
     }
 
+    function finalizeScannerInput() {
+      clearScannerCommitTimer();
+      if (state.scannerInputBuffer.length < SCANNER_MIN_LENGTH) {
+        state.scannerInputBuffer = '';
+        return;
+      }
+
+      applyScannerInput(state.scannerInputBuffer);
+      state.scannerInputBuffer = '';
+    }
+
+    function scheduleScannerCommit() {
+      clearScannerCommitTimer();
+      state.scannerCommitTimer = window.setTimeout(() => {
+        finalizeScannerInput();
+      }, SCANNER_COMMIT_DELAY_MS);
+    }
+
     function switchSection(target) {
       if (target === 'members') {
         if (state.adminUnlocked) {
@@ -426,6 +453,8 @@
         return;
       }
 
+      clearScannerCommitTimer();
+      state.scannerInputBuffer = '';
       dom.adminTabBtn.classList.add('active');
       dom.membersTabBtn.classList.remove('active');
       dom.adminSection.classList.add('active');
@@ -572,8 +601,8 @@
     function clearEditFields() {
       dom.editName.value = '';
       dom.editStudentNumber.value = '';
-      dom.currentBalance.value = '$0.00';
-      dom.balanceDelta.value = '0.00';
+      dom.currentBalance.value = ZERO_CURRENCY_TEXT;
+      dom.balanceDelta.value = ZERO_MONEY_TEXT;
     }
 
     function toMemberOptions(members) {
@@ -609,7 +638,7 @@
       dom.editName.value = member.name;
       dom.editStudentNumber.value = member.studentNumber || '';
       dom.currentBalance.value = `$${Number(member.balance).toFixed(2)}`;
-      dom.balanceDelta.value = '0.00';
+      dom.balanceDelta.value = ZERO_MONEY_TEXT;
     }
 
     async function refreshMembers() {
@@ -685,7 +714,7 @@
 
       dom.addName.value = '';
       dom.addStudentNumber.value = '';
-      dom.addBalance.value = '0.00';
+      dom.addBalance.value = ZERO_MONEY_TEXT;
       hideAddMemberDuplicateWarning();
       showMessage(`Added ${name}.`);
       await refreshMembers();
@@ -831,16 +860,15 @@
         }
 
         const now = Date.now();
-        if (now - state.scannerLastKeyAt > 80) {
+        if (now - state.scannerLastKeyAt > SCANNER_KEY_GAP_MS) {
           state.scannerInputBuffer = '';
         }
         state.scannerLastKeyAt = now;
 
         if (event.key === 'Enter') {
-          if (state.scannerInputBuffer.length >= 6) {
+          if (state.scannerInputBuffer.length >= SCANNER_MIN_LENGTH) {
             event.preventDefault();
-            applyScannerInput(state.scannerInputBuffer);
-            state.scannerInputBuffer = '';
+            finalizeScannerInput();
           }
           return;
         }
@@ -852,6 +880,7 @@
             focusSearchInput();
           }
           state.scannerInputBuffer += event.key;
+          scheduleScannerCommit();
         }
       });
 
