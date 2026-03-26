@@ -374,6 +374,22 @@
       }, 0);
     }
 
+    function focusAdminPasswordInput({ select = false } = {}) {
+      if (!dom.adminSection.classList.contains('active')) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        if (!dom.adminSection.classList.contains('active')) {
+          return;
+        }
+        dom.adminPassword.focus();
+        if (select) {
+          dom.adminPassword.select();
+        }
+      }, 0);
+    }
+
     function setPublicSearch(value, { preserveFocus = false } = {}) {
       const rawValue = String(value || '').trim();
       state.publicSearch = rawValue;
@@ -414,6 +430,9 @@
       dom.membersTabBtn.classList.remove('active');
       dom.adminSection.classList.add('active');
       dom.membersSection.classList.remove('active');
+      if (!state.adminUnlocked) {
+        focusAdminPasswordInput();
+      }
     }
 
     async function apiGet(url) {
@@ -849,6 +868,18 @@
       dom.memberSelect.addEventListener('change', populateEditFieldsFromSelectedMember);
 
       dom.unlockBtn.addEventListener('click', async () => {
+        await unlockAdmin();
+      });
+      dom.adminPassword.addEventListener('blur', () => {
+        if (!state.adminUnlocked) {
+          focusAdminPasswordInput();
+        }
+      });
+      dom.adminPassword.addEventListener('keydown', async (event) => {
+        if (event.key !== 'Enter') {
+          return;
+        }
+        event.preventDefault();
         await unlockAdmin();
       });
       dom.lockBtn.addEventListener('click', () => {
