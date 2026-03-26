@@ -4,6 +4,9 @@ Simple localhost web app for drinks balances.
 
 ## What members can do
 - Search by name or student number.
+- Scan a barcode with a physical scanner into the search bar.
+- Search accepts scanner values with a 3-character prefix before the stored student number.
+- Clear the search with one button.
 - Buy one drink (`-$1.00`) from their balance.
 - Student numbers are searchable but hidden in the public members table.
 
@@ -27,6 +30,8 @@ python3 server.py
 
 Open:
 - <http://127.0.0.1:8000>
+
+The Members search box is designed for a keyboard-wedge barcode scanner. It stays focused, accepts scanned values like `xxx12345678`, strips the 3-character prefix for matching, allows normal keyboard typing, and auto-clears after 1 minute.
 
 Database file is local SQLite at:
 - `./drinks_tab.db`

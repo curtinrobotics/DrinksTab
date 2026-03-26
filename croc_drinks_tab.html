@@ -13,6 +13,8 @@
       --border: #d1d5db;
       --primary: #0f766e;
       --primary-dark: #0b5c56;
+      --secondary: #475569;
+      --secondary-dark: #334155;
       --warn: #b45309;
       --ok: #166534;
       --error: #b91c1c;
@@ -43,6 +45,10 @@
     .tab-btn.active { background: var(--primary); }
     .section { display: none; }
     .section.active { display: block; }
+    .search-row { align-items: end; }
+    .search-actions { flex: 0 0 160px; }
+    .secondary-btn { background: var(--secondary); }
+    .secondary-btn:hover { background: var(--secondary-dark); }
   </style>
 </head>
 <body>
@@ -60,10 +66,13 @@
     <section id="membersSection" class="section active">
       <div class="card">
         <h2>Members</h2>
-        <div class="row">
+        <div class="row search-row">
           <div class="field">
             <label for="searchName">Search (Name or Student Number)</label>
             <input id="searchName" type="text" placeholder="e.g. Alex or 12345678">
+          </div>
+          <div class="search-actions">
+            <button id="clearSearchBtn" type="button" class="secondary-btn">Clear Search</button>
           </div>
         </div>
 
@@ -239,7 +248,10 @@
       drinkPrice: 1.0,
       publicSearch: '',
       editMemberSearch: '',
-      removeMemberSearch: ''
+      removeMemberSearch: '',
+      searchClearTimer: null,
+      scannerInputBuffer: '',
+      scannerLastKeyAt: 0
     };
 
     const dom = {
@@ -251,6 +263,7 @@
       adminSection: document.getElementById('adminSection'),
       membersBody: document.getElementById('membersBody'),
       searchName: document.getElementById('searchName'),
+      clearSearchBtn: document.getElementById('clearSearchBtn'),
       editMemberSearch: document.getElementById('editMemberSearch'),
       removeMemberSearch: document.getElementById('removeMemberSearch'),
       adminPassword: document.getElementById('adminPassword'),
@@ -307,6 +320,82 @@
       return String(value || '').trim().toLowerCase();
     }
 
+    function extractSearchableStudentNumber(rawValue) {
+      const compact = String(rawValue || '').replace(/\s+/g, '').trim();
+      if (!compact) return '';
+      if (/^[A-Za-z0-9]{7,8}$/.test(compact)) {
+        return compact.toLowerCase();
+      }
+
+      const barcodeMatch = compact.match(/^[A-Za-z0-9]{3}([A-Za-z0-9]{7,8})$/);
+      if (barcodeMatch) {
+        return barcodeMatch[1].toLowerCase();
+      }
+
+      return '';
+    }
+
+    function normalizedPublicSearch(value) {
+      const term = normalizedTerm(value);
+      return extractSearchableStudentNumber(term) || term;
+    }
+
+    function clearSearchClearTimer() {
+      if (state.searchClearTimer) {
+        clearTimeout(state.searchClearTimer);
+        state.searchClearTimer = null;
+      }
+    }
+
+    function scheduleSearchClear() {
+      clearSearchClearTimer();
+      if (!state.publicSearch) {
+        return;
+      }
+
+      state.searchClearTimer = window.setTimeout(() => {
+        setPublicSearch('', { preserveFocus: true });
+      }, 60000);
+    }
+
+    function focusSearchInput({ select = false } = {}) {
+      if (!dom.membersSection.classList.contains('active')) {
+        return;
+      }
+
+      window.setTimeout(() => {
+        if (!dom.membersSection.classList.contains('active')) {
+          return;
+        }
+        dom.searchName.focus();
+        if (select) {
+          dom.searchName.select();
+        }
+      }, 0);
+    }
+
+    function setPublicSearch(value, { preserveFocus = false } = {}) {
+      const rawValue = String(value || '').trim();
+      state.publicSearch = rawValue;
+      dom.searchName.value = rawValue;
+      renderPublicMembers();
+      scheduleSearchClear();
+      if (preserveFocus) {
+        focusSearchInput();
+      }
+    }
+
+    function applyScannerInput(rawValue) {
+      const trimmedValue = String(rawValue || '').trim();
+      if (!trimmedValue) {
+        return;
+      }
+
+      const normalizedValue = extractSearchableStudentNumber(trimmedValue) || trimmedValue;
+      setPublicSearch(normalizedValue, { preserveFocus: true });
+      dom.searchName.select();
+    }
+
     function switchSection(target) {
       if (target === 'members') {
         if (state.adminUnlocked) {
@@ -317,6 +406,7 @@
         dom.adminTabBtn.classList.remove('active');
         dom.membersSection.classList.add('active');
         dom.adminSection.classList.remove('active');
+        focusSearchInput();
         return;
       }
 
@@ -372,7 +462,7 @@
     function memberMatchesTerm(member, term) {
       if (!term) return true;
       const name = normalizedTerm(member.name);
-      const student = normalizedTerm(member.studentNumber);
+      const student = extractSearchableStudentNumber(member.studentNumber) || normalizedTerm(member.studentNumber);
       return name.startsWith(term) || student.startsWith(term);
     }
 
@@ -382,7 +472,7 @@
     }
 
     function getPublicFilteredMembers() {
-      const term = normalizedTerm(state.publicSearch);
+      const term = normalizedPublicSearch(state.publicSearch);
       return state.members.filter((member) => memberMatchesTerm(member, term));
     }
 
@@ -702,8 +792,48 @@
       dom.adminTabBtn.addEventListener('click', () => switchSection('admin'));
 
       dom.searchName.addEventListener('input', (event) => {
-        state.publicSearch = event.target.value || '';
-        renderPublicMembers();
+        setPublicSearch(event.target.value || '');
+      });
+
+      dom.searchName.addEventListener('blur', () => {
+        focusSearchInput();
+      });
+
+      dom.clearSearchBtn.addEventListener('click', () => {
+        setPublicSearch('', { preserveFocus: true });
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (!dom.membersSection.classList.contains('active')) {
+          return;
+        }
+        if (event.ctrlKey || event.metaKey || event.altKey) {
+          return;
+        }
+
+        const now = Date.now();
+        if (now - state.scannerLastKeyAt > 80) {
+          state.scannerInputBuffer = '';
+        }
+        state.scannerLastKeyAt = now;
+
+        if (event.key === 'Enter') {
+          if (state.scannerInputBuffer.length >= 6) {
+            event.preventDefault();
+            applyScannerInput(state.scannerInputBuffer);
+            state.scannerInputBuffer = '';
+          }
+          return;
+        }
+
+        if (event.key.length === 1) {
+          const activeElement = document.activeElement;
+          const isMembersSearchFocused = activeElement === dom.searchName;
+          if (!isMembersSearchFocused) {
+            focusSearchInput();
+          }
+          state.scannerInputBuffer += event.key;
+        }
       });
 
       dom.editMemberSearch.addEventListener('input', (event) => {
@@ -781,6 +911,7 @@
       lockAdmin();
       switchSection('members');
       bindEvents();
+      focusSearchInput();
 
       try {
         await refreshMembers();
