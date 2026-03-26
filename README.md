@@ -21,7 +21,6 @@ Admins can:
 
 - `server.py` - local Python server and SQLite API
 - `croc_drinks_tab.html` - single-page frontend
-- `vendor/zxing-browser.min.js` - bundled offline barcode decoder fallback
 - `drinks_tab.db` - local SQLite database, created automatically
 - `deploy/croc-drinks-tab.service` - systemd service file
 - `deploy/install_system_service.sh` - helper to install the service
@@ -33,7 +32,7 @@ Admins can:
 - A Chromium-based browser on Ubuntu
 - Webcam access enabled in the browser
 
-The barcode scanner uses the browser's built-in `BarcodeDetector` API when available and falls back to a bundled offline decoder when it is not. It accepts IDs with 3 leading unused characters followed by either a 7-character or 8-character member ID.
+The barcode scanner uses the browser's built-in `BarcodeDetector` API. Chrome or Chromium on Ubuntu is recommended. It accepts IDs with 3 leading unused characters followed by either a 7-character or 8-character member ID.
 
 ## Quick Start
 

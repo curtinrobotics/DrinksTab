@@ -243,7 +243,6 @@
     </section>
   </div>
 
-  <script src="/vendor/zxing-browser.min.js"></script>
   <script>
     const API = {
       members: '/api/members',
@@ -267,10 +266,7 @@
       removeMemberSearch: '',
       scanner: {
         supported: typeof window !== 'undefined' && 'BarcodeDetector' in window,
-        fallbackAvailable: typeof window !== 'undefined' && typeof window.ZXingBrowser !== 'undefined',
         detector: null,
-        fallbackReader: null,
-        fallbackControls: null,
         stream: null,
         active: false,
         scanTimer: null,
@@ -379,16 +375,6 @@
       dom.scanStatus.style.color = isError ? 'var(--error)' : 'var(--muted)';
     }
 
-    function canDecodeBarcodes() {
-      return state.scanner.supported || state.scanner.fallbackAvailable;
-    }
-
-    function showScannerUi() {
-      dom.scanVideo.classList.remove('hidden');
-      dom.startScanBtn.classList.add('hidden');
-      dom.stopScanBtn.classList.remove('hidden');
-    }
-
     function scheduleNextScan(delayMs = state.scanner.scanIntervalMs) {
       if (state.scanner.scanTimer) {
         clearTimeout(state.scanner.scanTimer);
@@ -403,93 +389,6 @@
         state.scanner.scanTimer = null;
         void scanVideoFrame();
       }, delayMs);
-    }
-
-    function scoreCameraDevice(device) {
-      const label = String(device && device.label ? device.label : '').toLowerCase();
-      let score = 0;
-
-      if (!label) return score;
-      if (label.includes('integrated')) score += 5;
-      if (label.includes('webcam')) score += 5;
-      if (label.includes('camera')) score += 4;
-      if (label.includes('usb')) score += 2;
-      if (label.includes('ir')) score -= 6;
-      if (label.includes('infrared')) score -= 6;
-      if (label.includes('depth')) score -= 6;
-      if (label.includes('virtual')) score -= 4;
-
-      return score;
-    }
-
-    async function listPreferredVideoInputs() {
-      const mediaDevices = navigator.mediaDevices;
-      if (!mediaDevices || typeof mediaDevices.enumerateDevices !== 'function') {
-        return [];
-      }
-
-      const devices = await mediaDevices.enumerateDevices();
-      return devices
-        .filter((device) => device.kind === 'videoinput')
-        .sort((a, b) => scoreCameraDevice(b) - scoreCameraDevice(a));
-    }
-
-    async function getPreferredCameraStream() {
-      const mediaDevices = navigator.mediaDevices;
-      if (!mediaDevices || typeof mediaDevices.getUserMedia !== 'function') {
-        throw new Error('This browser cannot access the webcam.');
-      }
-
-      const attempts = [];
-      const cameras = await listPreferredVideoInputs();
-      for (const camera of cameras) {
-        attempts.push({
-          video: {
-            deviceId: { exact: camera.deviceId },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
-      }
-
-      attempts.push(
-        {
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        },
-        {
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        },
-        {
-          video: true,
-          audio: false
-        }
-      );
-
-      let lastError = null;
-      for (const constraints of attempts) {
-        try {
-          return await mediaDevices.getUserMedia(constraints);
-        } catch (err) {
-          lastError = err;
-        }
-      }
-
-      throw lastError || new Error('Could not access the webcam.');
-    }
-
-    async function getPreferredCameraDeviceId() {
-      const cameras = await listPreferredVideoInputs();
-      return cameras.length > 0 ? cameras[0].deviceId : undefined;
     }
 
     function ensureBarcodeDetector() {
@@ -512,11 +411,6 @@
         state.scanner.scanTimer = null;
       }
 
-      if (state.scanner.fallbackControls && typeof state.scanner.fallbackControls.stop === 'function') {
-        state.scanner.fallbackControls.stop();
-        state.scanner.fallbackControls = null;
-      }
-
       if (state.scanner.stream) {
         for (const track of state.scanner.stream.getTracks()) {
           track.stop();
@@ -536,44 +430,6 @@
       }
     }
 
-    function getDecodedText(result) {
-      if (!result) return '';
-      if (typeof result.getText === 'function') {
-        return result.getText();
-      }
-      return String(result.text || result.rawValue || '');
-    }
-
-    function isIgnorableDecodeError(err) {
-      if (!err) return true;
-
-      const name = String(err.name || '');
-      const message = String(err.message || '');
-      if (name === 'NotFoundException' || name === 'ChecksumException' || name === 'FormatException') {
-        return true;
-      }
-
-      if (message.includes('No MultiFormat Readers were able to detect the code')) {
-        return true;
-      }
-
-      return false;
-    }
-
-    function isRepeatedScan(studentNumber) {
-      const now = Date.now();
-      if (
-        studentNumber === state.scanner.lastScannedValue &&
-        now - state.scanner.lastScannedAt < state.scanner.rescanCooldownMs
-      ) {
-        return true;
-      }
-
-      state.scanner.lastScannedValue = studentNumber;
-      state.scanner.lastScannedAt = now;
-      return false;
-    }
-
     async function scanVideoFrame() {
       if (!state.scanner.active || !dom.scanVideo.srcObject) {
         return;
@@ -582,16 +438,22 @@
       try {
         const detector = ensureBarcodeDetector();
         const barcodes = await detector.detect(dom.scanVideo);
+        const now = Date.now();
         for (const barcode of barcodes) {
           const studentNumber = extractStudentNumber(barcode.rawValue);
           if (!studentNumber) {
             continue;
           }
 
-          if (isRepeatedScan(studentNumber)) {
+          if (
+            studentNumber === state.scanner.lastScannedValue &&
+            now - state.scanner.lastScannedAt < state.scanner.rescanCooldownMs
+          ) {
             continue;
           }
 
+          state.scanner.lastScannedValue = studentNumber;
+          state.scanner.lastScannedAt = now;
           setPublicSearch(studentNumber);
           updateScanStatus(`Scanned ${studentNumber}. Waiting for next card...`);
           scheduleNextScan(state.scanner.rescanCooldownMs);
@@ -606,83 +468,32 @@
       scheduleNextScan();
     }
 
-    function getFallbackReader() {
-      if (!state.scanner.fallbackAvailable) {
-        throw new Error('Offline barcode fallback is not available.');
-      }
-
-      if (!state.scanner.fallbackReader) {
-        state.scanner.fallbackReader = new window.ZXingBrowser.BrowserMultiFormatReader(
-          undefined,
-          state.scanner.scanIntervalMs
-        );
-      }
-
-      return state.scanner.fallbackReader;
-    }
-
-    async function startFallbackScan() {
-      if (state.scanner.fallbackControls) {
-        state.scanner.active = true;
-        showScannerUi();
-        updateScanStatus('Scanner active. Present a student ID to the camera.');
-        return;
-      }
-
-      const reader = getFallbackReader();
-      const deviceId = await getPreferredCameraDeviceId();
-
-      state.scanner.active = true;
-      showScannerUi();
-      updateScanStatus('Scanner active. Present a student ID to the camera.');
-      state.scanner.fallbackControls = await reader.decodeFromVideoDevice(
-        deviceId,
-        dom.scanVideo,
-        (result, err) => {
-          if (result) {
-            const studentNumber = extractStudentNumber(getDecodedText(result));
-            if (!studentNumber || isRepeatedScan(studentNumber)) {
-              return;
-            }
-
-            setPublicSearch(studentNumber);
-            updateScanStatus(`Scanned ${studentNumber}. Waiting for next card...`);
-            return;
-          }
-
-          if (!isIgnorableDecodeError(err)) {
-            updateScanStatus(err.message || 'Barcode scan failed.', true);
-          }
-        }
-      );
-    }
-
     async function startBarcodeScan() {
       try {
-        if (!canDecodeBarcodes()) {
-          throw new Error('Barcode scanning is not available in this browser.');
-        }
-
-        if (!state.scanner.supported) {
-          await startFallbackScan();
-          return;
-        }
-
         ensureBarcodeDetector();
         if (state.scanner.stream) {
           state.scanner.active = true;
-          showScannerUi();
+          dom.scanVideo.classList.remove('hidden');
+          dom.startScanBtn.classList.add('hidden');
+          dom.stopScanBtn.classList.remove('hidden');
           updateScanStatus('Scanner active. Present a student ID to the camera.');
           scheduleNextScan(0);
           return;
         }
 
-        const stream = await getPreferredCameraStream();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: 'environment'
+          },
+          audio: false
+        });
 
         state.scanner.stream = stream;
         state.scanner.active = true;
         dom.scanVideo.srcObject = stream;
-        showScannerUi();
+        dom.scanVideo.classList.remove('hidden');
+        dom.startScanBtn.classList.add('hidden');
+        dom.stopScanBtn.classList.remove('hidden');
         updateScanStatus('Scanner active. Present a student ID to the camera.');
         for (const track of stream.getVideoTracks()) {
           track.addEventListener('ended', () => {
@@ -714,7 +525,7 @@
         dom.adminTabBtn.classList.remove('active');
         dom.membersSection.classList.add('active');
         dom.adminSection.classList.remove('active');
-        if (canDecodeBarcodes()) {
+        if (state.scanner.supported) {
           void startBarcodeScan();
         }
         return;
@@ -1197,7 +1008,7 @@
       lockAdmin();
       switchSection('members');
       bindEvents();
-      if (!canDecodeBarcodes()) {
+      if (!state.scanner.supported) {
         dom.startScanBtn.disabled = true;
         dom.stopScanBtn.disabled = true;
         updateScanStatus('Barcode scanning is not supported in this browser.');
