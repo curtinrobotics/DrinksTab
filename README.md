@@ -20,6 +20,7 @@ Simple localhost web app for drinks balances.
 - Admin auto-locks when switching back to the Members tab.
 - Export current members database to CSV.
 - Initialize/replace database from exported CSV.
+- Retrieve member activity/transaction logs by date range and export them to CSV.
 
 ## Local run (manual)
 From this folder:
@@ -96,6 +97,8 @@ sqlite3 ./drinks_tab.db \
 "SELECT datetime(event_time_ms/1000,'unixepoch','localtime'), action, actor, member_name, balance_before, balance_after, balance_delta FROM member_audit_log ORDER BY id DESC LIMIT 20;"
 ```
 
+Admins can also retrieve and export the same activity log from the Admin page. The Transaction Log section supports a date range, all history, detailed rows, and a summary by member.
+
 ## API used by the webpage
 - `GET /api/members?search=<name_or_student_number>`
 - `POST /api/purchase` body: `{ "id": 1 }`
@@ -105,6 +108,9 @@ sqlite3 ./drinks_tab.db \
 - `POST /api/admin/edit-member` header: `X-Admin-Password: ****`
   - body: `{ "id": 1, "name": "Alice", "studentNumber": "12345678", "balanceDelta": 2.0 }`
 - `GET /api/admin/export-csv` header: `X-Admin-Password: ****`
+- `GET /api/admin/audit-log?mode=full&startDate=2026-06-01&endDate=2026-06-30` header: `X-Admin-Password: ****`
+- `GET /api/admin/audit-log?mode=summary&all=1` header: `X-Admin-Password: ****`
+- `GET /api/admin/export-audit-log-csv?mode=full&all=1` header: `X-Admin-Password: ****`
 - `POST /api/admin/import-csv` header: `X-Admin-Password: ****`
   - body: `{ "csv": "Name,StudentNumber,Balance\\nAlice,12345678,5.00\\n" }`
 - `POST /api/admin/set-drink-price` header: `X-Admin-Password: ****`

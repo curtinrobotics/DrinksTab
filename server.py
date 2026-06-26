@@ -9,6 +9,7 @@ import io
 import json
 import sqlite3
 import time
+from datetime import datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -503,6 +504,145 @@ def export_members_csv() -> str:
     return output.getvalue()
 
 
+def parse_audit_date_range(start_date: str, end_date: str) -> tuple[int, int]:
+    clean_start = str(start_date or "").strip()
+    clean_end = str(end_date or "").strip()
+    if not clean_start or not clean_end:
+        raise ValueError("startDate and endDate are required")
+
+    try:
+        start_day = datetime.strptime(clean_start, "%Y-%m-%d")
+        end_day = datetime.strptime(clean_end, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("dates must use YYYY-MM-DD format") from exc
+
+    if end_day < start_day:
+        raise ValueError("endDate must be on or after startDate")
+
+    start_ms = int(start_day.timestamp() * 1000)
+    end_exclusive_ms = int((end_day + timedelta(days=1)).timestamp() * 1000)
+    return start_ms, end_exclusive_ms
+
+
+def format_local_event_time(event_time_ms: int) -> str:
+    return datetime.fromtimestamp(event_time_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_csv_money(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.2f}"
+
+
+def audit_where_clause(start_date: str, end_date: str, all_history: bool) -> tuple[str, list[int]]:
+    if all_history:
+        return "", []
+
+    start_ms, end_exclusive_ms = parse_audit_date_range(start_date, end_date)
+    return "WHERE event_time_ms >= ? AND event_time_ms < ?", [start_ms, end_exclusive_ms]
+
+
+def add_member_filter(where_sql: str) -> str:
+    member_filter = "(member_id IS NOT NULL OR TRIM(COALESCE(member_name, '')) <> '')"
+    if where_sql:
+        return f"{where_sql} AND {member_filter}"
+    return f"WHERE {member_filter}"
+
+
+def audit_log_table(
+    mode: str,
+    start_date: str,
+    end_date: str,
+    all_history: bool = False,
+) -> tuple[list[str], list[list[object]]]:
+    where_sql, params = audit_where_clause(start_date, end_date, all_history)
+
+    if mode == "summary":
+        columns = ["Member", "StudentNumber", "TotalTransactions"]
+        query = f"""
+            SELECT
+                COALESCE(NULLIF(TRIM(member_name), ''), 'Unknown member') AS member_name,
+                COALESCE(student_number, '') AS student_number,
+                COUNT(*) AS transaction_count
+            FROM member_audit_log
+            {add_member_filter(where_sql)}
+            GROUP BY member_id, member_name, student_number
+            ORDER BY member_name COLLATE NOCASE ASC
+        """
+        with db_conn() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return columns, [
+            [row["member_name"], row["student_number"], int(row["transaction_count"])]
+            for row in rows
+        ]
+
+    if mode != "full":
+        raise ValueError("mode must be full or summary")
+
+    columns = [
+        "Time",
+        "Action",
+        "Actor",
+        "MemberID",
+        "MemberName",
+        "StudentNumber",
+        "BalanceBefore",
+        "BalanceAfter",
+        "BalanceDelta",
+        "Details",
+    ]
+    query = f"""
+        SELECT
+            id,
+            event_time_ms,
+            action,
+            actor,
+            member_id,
+            member_name,
+            student_number,
+            balance_before,
+            balance_after,
+            balance_delta,
+            details
+        FROM member_audit_log
+        {where_sql}
+        ORDER BY event_time_ms DESC, id DESC
+    """
+    with db_conn() as conn:
+        rows = conn.execute(query, params).fetchall()
+
+    return columns, [
+        [
+            format_local_event_time(int(row["event_time_ms"])),
+            row["action"],
+            row["actor"],
+            row["member_id"] if row["member_id"] is not None else "",
+            row["member_name"] or "",
+            row["student_number"] or "",
+            format_csv_money(row["balance_before"]),
+            format_csv_money(row["balance_after"]),
+            format_csv_money(row["balance_delta"]),
+            row["details"] or "",
+        ]
+        for row in rows
+    ]
+
+
+def list_audit_log(mode: str, start_date: str, end_date: str, all_history: bool = False) -> dict:
+    columns, rows = audit_log_table(mode, start_date, end_date, all_history)
+    return {"columns": columns, "rows": rows}
+
+
+def export_audit_log_csv(mode: str, start_date: str, end_date: str, all_history: bool = False) -> str:
+    columns, rows = audit_log_table(mode, start_date, end_date, all_history)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(columns)
+    for row in rows:
+        writer.writerow(row)
+    return output.getvalue()
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(BASE_DIR), **kwargs)
@@ -543,22 +683,48 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
 
-        if parsed.path == "/api/members":
-            qs = parse_qs(parsed.query)
-            search = (qs.get("search", [""])[0] or "").strip()
-            self.send_json(
-                200,
-                {
-                    "members": list_members(search),
-                    "drinkPrice": get_drink_price(),
-                },
-            )
-            return
-
-        if parsed.path == "/api/admin/export-csv":
-            if not self.require_admin():
+        try:
+            if parsed.path == "/api/members":
+                qs = parse_qs(parsed.query)
+                search = (qs.get("search", [""])[0] or "").strip()
+                self.send_json(
+                    200,
+                    {
+                        "members": list_members(search),
+                        "drinkPrice": get_drink_price(),
+                    },
+                )
                 return
-            self.send_csv("drinks_members_export.csv", export_members_csv())
+
+            if parsed.path == "/api/admin/export-csv":
+                if not self.require_admin():
+                    return
+                self.send_csv("drinks_members_export.csv", export_members_csv())
+                return
+
+            if parsed.path in {"/api/admin/audit-log", "/api/admin/export-audit-log-csv"}:
+                if not self.require_admin():
+                    return
+
+                qs = parse_qs(parsed.query)
+                start_date = (qs.get("startDate", [""])[0] or "").strip()
+                end_date = (qs.get("endDate", [""])[0] or "").strip()
+                mode = (qs.get("mode", ["full"])[0] or "full").strip().lower()
+                all_history = (qs.get("all", [""])[0] or "").strip() == "1"
+
+                if parsed.path == "/api/admin/audit-log":
+                    self.send_json(200, list_audit_log(mode, start_date, end_date, all_history))
+                    return
+
+                scope = "all" if all_history else f"{start_date}_to_{end_date}"
+                filename = f"drinks_transaction_log_{mode}_{scope}.csv"
+                self.send_csv(filename, export_audit_log_csv(mode, start_date, end_date, all_history))
+                return
+        except ValueError as exc:
+            self.send_json(400, {"error": str(exc)})
+            return
+        except sqlite3.Error as exc:
+            self.send_json(500, {"error": f"database error: {exc}"})
             return
 
         if parsed.path == "/":

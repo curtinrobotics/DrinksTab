@@ -34,6 +34,10 @@
     table { width: 100%; border-collapse: collapse; margin-top: 10px; }
     th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 10px; }
     td.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .table-wrap { overflow-x: auto; }
+    .audit-table { min-width: 880px; }
+    .checkbox-label { display: flex; min-height: 41px; align-items: center; gap: 8px; color: var(--text); }
+    .checkbox-label input { width: auto; }
     .message { margin-top: 12px; border-radius: 8px; padding: 10px; font-weight: 600; }
     .message.ok { background: #dcfce7; color: var(--ok); }
     .message.error { background: #fee2e2; color: var(--error); }
@@ -214,6 +218,45 @@
           </div>
 
           <div class="card" style="margin-top: 10px;">
+            <h3>Transaction Log</h3>
+            <div class="row">
+              <div class="field">
+                <label for="transactionLogMode">Format</label>
+                <select id="transactionLogMode">
+                  <option value="full">Detailed Log</option>
+                  <option value="summary">Summary by Member</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="transactionStartDate">Start Date</label>
+                <input id="transactionStartDate" type="date">
+              </div>
+              <div class="field">
+                <label for="transactionEndDate">End Date</label>
+                <input id="transactionEndDate" type="date">
+              </div>
+              <div class="field" style="flex: 0 0 150px;">
+                <label>Scope</label>
+                <label class="checkbox-label" for="transactionAllHistory">
+                  <input id="transactionAllHistory" type="checkbox">
+                  All History
+                </label>
+              </div>
+              <div style="width: 170px;"><button id="loadTransactionLogBtn">Retrieve Log</button></div>
+              <div style="width: 190px;"><button id="exportTransactionLogBtn" class="secondary-btn">Export Log CSV</button></div>
+            </div>
+            <p id="transactionLogSummary" class="muted">Choose a date range to retrieve transactions.</p>
+            <div class="table-wrap">
+              <table class="audit-table">
+                <thead>
+                  <tr id="transactionLogHead"></tr>
+                </thead>
+                <tbody id="transactionLogBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top: 10px;">
             <h3>Drink Price</h3>
             <div class="row">
               <div class="field">
@@ -247,7 +290,9 @@
       editMember: '/api/admin/edit-member',
       exportCsv: '/api/admin/export-csv',
       importCsv: '/api/admin/import-csv',
-      setDrinkPrice: '/api/admin/set-drink-price'
+      setDrinkPrice: '/api/admin/set-drink-price',
+      auditLog: '/api/admin/audit-log',
+      exportAuditLogCsv: '/api/admin/export-audit-log-csv'
     };
 
     const state = {
@@ -294,6 +339,13 @@
       currentBalance: document.getElementById('currentBalance'),
       balanceDelta: document.getElementById('balanceDelta'),
       importCsvFile: document.getElementById('importCsvFile'),
+      transactionLogMode: document.getElementById('transactionLogMode'),
+      transactionStartDate: document.getElementById('transactionStartDate'),
+      transactionEndDate: document.getElementById('transactionEndDate'),
+      transactionAllHistory: document.getElementById('transactionAllHistory'),
+      transactionLogSummary: document.getElementById('transactionLogSummary'),
+      transactionLogHead: document.getElementById('transactionLogHead'),
+      transactionLogBody: document.getElementById('transactionLogBody'),
       adminDrinkPrice: document.getElementById('adminDrinkPrice'),
       unlockBtn: document.getElementById('unlockBtn'),
       lockBtn: document.getElementById('lockBtn'),
@@ -302,6 +354,8 @@
       removeMemberBtn: document.getElementById('removeMemberBtn'),
       exportCsvBtn: document.getElementById('exportCsvBtn'),
       importCsvBtn: document.getElementById('importCsvBtn'),
+      loadTransactionLogBtn: document.getElementById('loadTransactionLogBtn'),
+      exportTransactionLogBtn: document.getElementById('exportTransactionLogBtn'),
       setDrinkPriceBtn: document.getElementById('setDrinkPriceBtn')
     };
 
@@ -324,6 +378,50 @@
 
     function showError(err) {
       showMessage(err.message || String(err), 'error');
+    }
+
+    function toDateInputValue(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    function setDefaultTransactionLogDateRange() {
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(today.getDate() - 30);
+      dom.transactionStartDate.value = toDateInputValue(start);
+      dom.transactionEndDate.value = toDateInputValue(today);
+    }
+
+    function updateTransactionLogDateInputs() {
+      const disabled = dom.transactionAllHistory.checked;
+      dom.transactionStartDate.disabled = disabled;
+      dom.transactionEndDate.disabled = disabled;
+    }
+
+    function getTransactionLogParams() {
+      const params = new URLSearchParams({ mode: dom.transactionLogMode.value });
+      if (dom.transactionAllHistory.checked) {
+        params.set('all', '1');
+        return params;
+      }
+
+      const startDate = dom.transactionStartDate.value;
+      const endDate = dom.transactionEndDate.value;
+      if (!startDate || !endDate) {
+        showMessage('Select a start and end date.', 'error');
+        return null;
+      }
+      if (endDate < startDate) {
+        showMessage('End date must be on or after start date.', 'error');
+        return null;
+      }
+
+      params.set('startDate', startDate);
+      params.set('endDate', endDate);
+      return params;
     }
 
     function normalizedTerm(value) {
@@ -464,16 +562,39 @@
       }
     }
 
-    async function apiGet(url) {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+    function adminHeaders(base = {}) {
+      const headers = { ...base };
+      if (state.adminPassword) {
+        headers['X-Admin-Password'] = state.adminPassword;
+      }
+      return headers;
+    }
+
+    async function apiGet(url, { admin = false } = {}) {
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: admin ? adminHeaders() : {}
+      });
+      let payload = {};
+      try {
+        payload = await res.json();
+      } catch (_) {
+        payload = {};
+      }
+
+      if (!res.ok) {
+        if (admin && res.status === 401) {
+          lockAdmin();
+        }
+        throw new Error(payload.error || `HTTP ${res.status}`);
+      }
+      return payload;
     }
 
     async function apiPost(url, body, { admin = false } = {}) {
-      const headers = { 'Content-Type': 'application/json' };
+      let headers = { 'Content-Type': 'application/json' };
       if (admin && state.adminPassword) {
-        headers['X-Admin-Password'] = state.adminPassword;
+        headers = adminHeaders(headers);
       }
 
       const res = await fetch(url, {
@@ -497,6 +618,45 @@
       }
 
       return payload;
+    }
+
+    function filenameFromContentDisposition(value, fallback) {
+      const match = String(value || '').match(/filename="?([^"]+)"?/);
+      return match ? match[1] : fallback;
+    }
+
+    async function downloadAdminCsv(url, fallbackFilename) {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: adminHeaders()
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          lockAdmin();
+        }
+        let message = `Export failed: HTTP ${res.status}`;
+        try {
+          const payload = await res.json();
+          if (payload && payload.error) {
+            message = payload.error;
+          }
+        } catch (_) {}
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const urlObject = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = urlObject;
+      link.download = filenameFromContentDisposition(
+        res.headers.get('Content-Disposition'),
+        fallbackFilename
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(urlObject);
     }
 
     function ensureAdminUnlocked() {
@@ -641,6 +801,42 @@
       dom.balanceDelta.value = ZERO_MONEY_TEXT;
     }
 
+    function renderTransactionLog(columns, rows) {
+      const safeColumns = Array.isArray(columns) ? columns : [];
+      const safeRows = Array.isArray(rows) ? rows : [];
+      dom.transactionLogHead.innerHTML = '';
+      dom.transactionLogBody.innerHTML = '';
+
+      for (const column of safeColumns) {
+        const header = document.createElement('th');
+        header.textContent = column;
+        dom.transactionLogHead.appendChild(header);
+      }
+
+      if (safeRows.length === 0) {
+        dom.transactionLogSummary.textContent = 'No transactions found.';
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = Math.max(safeColumns.length, 1);
+        cell.className = 'muted';
+        cell.textContent = 'No transactions found.';
+        row.appendChild(cell);
+        dom.transactionLogBody.appendChild(row);
+        return;
+      }
+
+      dom.transactionLogSummary.textContent = `${safeRows.length} row${safeRows.length === 1 ? '' : 's'} retrieved.`;
+      for (const cells of safeRows) {
+        const row = document.createElement('tr');
+        for (const value of cells) {
+          const cell = document.createElement('td');
+          cell.textContent = value == null ? '' : String(value);
+          row.appendChild(cell);
+        }
+        dom.transactionLogBody.appendChild(row);
+      }
+    }
+
     async function refreshMembers() {
       const data = await apiGet(API.members);
       state.members = Array.isArray(data.members) ? data.members : [];
@@ -771,34 +967,7 @@
     async function exportMembersCsv() {
       if (!ensureAdminUnlocked()) return;
 
-      const res = await fetch(API.exportCsv, {
-        method: 'GET',
-        headers: { 'X-Admin-Password': state.adminPassword }
-      });
-
-      if (!res.ok) {
-        if (res.status === 401) {
-          lockAdmin();
-        }
-        let message = `Export failed: HTTP ${res.status}`;
-        try {
-          const payload = await res.json();
-          if (payload && payload.error) {
-            message = payload.error;
-          }
-        } catch (_) {}
-        throw new Error(message);
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'drinks_members_export.csv';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      await downloadAdminCsv(API.exportCsv, 'drinks_members_export.csv');
       showMessage('CSV export downloaded.');
     }
 
@@ -819,6 +988,29 @@
       dom.importCsvFile.value = '';
       showMessage('Database initialized from CSV.');
       await refreshMembers();
+    }
+
+    async function loadTransactionLog() {
+      if (!ensureAdminUnlocked()) return;
+
+      const params = getTransactionLogParams();
+      if (!params) return;
+
+      const payload = await apiGet(`${API.auditLog}?${params.toString()}`, { admin: true });
+      renderTransactionLog(payload.columns, payload.rows);
+    }
+
+    async function exportTransactionLogCsv() {
+      if (!ensureAdminUnlocked()) return;
+
+      const params = getTransactionLogParams();
+      if (!params) return;
+
+      await downloadAdminCsv(
+        `${API.exportAuditLogCsv}?${params.toString()}`,
+        'drinks_transaction_log.csv'
+      );
+      showMessage('Transaction log CSV downloaded.');
     }
 
     async function updateDrinkPriceFromAdmin() {
@@ -958,6 +1150,24 @@
         }
       });
 
+      dom.transactionAllHistory.addEventListener('change', updateTransactionLogDateInputs);
+
+      dom.loadTransactionLogBtn.addEventListener('click', async () => {
+        try {
+          await loadTransactionLog();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      dom.exportTransactionLogBtn.addEventListener('click', async () => {
+        try {
+          await exportTransactionLogCsv();
+        } catch (err) {
+          showError(err);
+        }
+      });
+
       dom.setDrinkPriceBtn.addEventListener('click', async () => {
         try {
           await updateDrinkPriceFromAdmin();
@@ -968,6 +1178,8 @@
     }
 
     async function init() {
+      setDefaultTransactionLogDateRange();
+      updateTransactionLogDateInputs();
       lockAdmin();
       switchSection('members');
       bindEvents();
